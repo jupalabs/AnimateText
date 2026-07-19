@@ -1,143 +1,172 @@
 # TextMorph
 
-TextMorph is a dependency-free iOS package for fluid, shaping-safe transitions
-between arbitrary single-line strings. Shared text stays on screen and moves to
-its new position; inserted and removed text follows a restrained spring, scale,
-and opacity treatment.
+TextMorph is a dependency-free macOS package for fluid, shaping-safe
+transitions between arbitrary single-line strings. Shared text stays visible
+and moves to its new position while inserted and removed text follows a
+restrained spring, scale, and opacity treatment.
 
-It is designed for interface copy such as `Continue` → `Confirm`, changing
-button labels, status text, live captions, and compact values. Digits are treated
-as ordinary text. TextMorph intentionally does not implement an odometer or
+It is designed for native Mac interface copy such as changing branch names,
+button labels, status text, compact values, and live captions. Digits are
+ordinary text; TextMorph intentionally does not implement an odometer or
 rolling-number animation.
 
 ## Requirements
 
-- iOS 17 or later
+- macOS 15 or later
 - Swift 6.0 or later
 - Xcode 16 or later
-- SwiftUI or UIKit
+- SwiftUI or AppKit
 
 ## Installation
 
-Add this directory as a local package in Xcode with **File → Add Package
-Dependencies… → Add Local…**, then link the `TextMorph` product to the app
-target.
+Add `https://github.com/jupalabs/AnimateText` in Xcode with **File → Add
+Package Dependencies…**, then link the `TextMorph` product to your target.
 
-From another Swift package, use a local dependency while developing:
+From another Swift package:
 
 ```swift
 dependencies: [
-    .package(path: "../TextMorph")
+    .package(
+        url: "https://github.com/jupalabs/AnimateText.git",
+        branch: "main"
+    )
 ]
 ```
 
-and add the product to the consuming target:
+Add the product to the consuming target:
 
 ```swift
-.product(name: "TextMorph", package: "TextMorph")
+.product(name: "TextMorph", package: "AnimateText")
 ```
 
-Once this package is hosted, replace the path dependency with its repository
-URL and a tagged version.
+Use a version requirement instead of `main` after the repository publishes a
+release tag.
 
 ## SwiftUI
 
 ```swift
+import AppKit
 import SwiftUI
 import TextMorph
 
-struct ConfirmationButton: View {
-    @State private var isReady = false
+struct BranchTitle: View {
+    let branchName: String
 
     var body: some View {
-        Button {
-            isReady.toggle()
-        } label: {
-            TextMorph(isReady ? "Confirm" : "Continue")
-                .textFont(.systemFont(ofSize: 17, weight: .semibold))
-                .textColor(.white)
-                .morphAnimation(.snappy)
-        }
+        TextMorph(
+            branchName,
+            font: .systemFont(ofSize: 24, weight: .semibold),
+            textColor: .labelColor,
+            animation: .smooth
+        )
+        .textTruncation(.middle)
     }
 }
 ```
 
-`TextMorph` animates whenever its string changes. It exposes its target text as
-one accessibility element and participates in first- and last-text-baseline
-alignment. Its frame follows the line's measured size with the same physical
-spring used by the glyph motion.
+`TextMorph` updates whenever its string changes. It participates in text
+baseline alignment, accepts horizontal compression, and inserts an ellipsis
+when the proposed width is narrower than the natural line.
 
-For an immediate update, use a disabled transition:
-
-```swift
-TextMorph(label)
-    .morphAnimation(shouldAnimate ? .default : .disabled)
-```
-
-The complete SwiftUI initializer is:
+The complete initializer is:
 
 ```swift
 TextMorph(
     label,
-    font: .preferredFont(forTextStyle: .headline),
-    textColor: .label,
+    font: .preferredFont(forTextStyle: .headline, options: [:]),
+    textColor: .labelColor,
     animation: .default,
     granularity: .automatic,
+    truncationMode: .tail,
     onAnimationCompletion: {
-        // Only the latest, uninterrupted morph calls this closure.
+        // Only the latest uninterrupted morph calls this closure.
     }
 )
 ```
 
-TextMorph uses `UIFont` and `UIColor` deliberately: the exact same objects are
-used for Core Text shaping, bitmap rendering, measurement, and the UIKit API.
-This avoids a second approximation of a SwiftUI `Font` or `ShapeStyle`.
-
-## UIKit
+The fluent modifiers mirror those initializer options:
 
 ```swift
-import TextMorph
-import UIKit
+TextMorph(label)
+    .textFont(.systemFont(ofSize: 17, weight: .semibold))
+    .textColor(.secondaryLabelColor)
+    .morphAnimation(.snappy)
+    .granularity(.grapheme)
+    .textTruncation(.tail)
+    .onAnimationCompletion { finished() }
+```
 
-let label = TextMorphLabel(
-    text: "Continue",
-    font: .systemFont(ofSize: 17, weight: .semibold),
-    textColor: .label,
-    animation: .default,
+Use `.morphAnimation(.disabled)` for immediate updates.
+
+TextMorph deliberately accepts `NSFont` and `NSColor`. The same native font
+and resolved color are used for Core Text shaping, measurement, rasterization,
+the AppKit view, and the SwiftUI adapter, avoiding an approximation of a
+SwiftUI `Font` or `ShapeStyle`.
+
+## AppKit
+
+```swift
+import AppKit
+import TextMorph
+
+let titleView = TextMorphView(
+    text: "feature/sidebar",
+    font: .systemFont(ofSize: 24, weight: .semibold),
+    textColor: .labelColor,
+    animation: .smooth,
     granularity: .automatic,
-    textAlignment: .natural
+    textAlignment: .leading,
+    truncationMode: .middle
 )
 
-label.translatesAutoresizingMaskIntoConstraints = false
+titleView.translatesAutoresizingMaskIntoConstraints = false
 
 // Later:
-label.setText("Confirm", animated: true)
+titleView.setText("feature/window-toolbar", animated: true)
 ```
 
-`TextMorphLabel` supplies an intrinsic content size. By default, that intrinsic
-size follows the spring during a morph. Set
-`animatesIntrinsicContentSize = false` when a parent owns sizing or when
-repeated Auto Layout invalidation is undesirable:
+`TextMorphView` supplies an intrinsic content size and honors Auto Layout
+compression. When its assigned width is narrower than the natural line, it
+renders a shaping-safe truncated target rather than drawing beyond its bounds.
+
+By default, an unconstrained view reports its interpolated intrinsic size
+during a morph. Disable repeated intrinsic-size invalidation when a parent owns
+sizing:
 
 ```swift
-label.animatesIntrinsicContentSize = false
+titleView.animatesIntrinsicContentSize = false
 ```
 
-The UIKit view is noninteractive, does not clip animated overhangs, and behaves
-as one `.staticText` accessibility element. `text`, `font`, `textColor`,
-`animation`, `granularity`, and `textAlignment` can all be changed after
+The view is intentionally noninteractive and does not intercept mouse events.
+Its public `text`, `font`, `textColor`, `animation`, `granularity`,
+`textAlignment`, and `truncationMode` properties can all change after
 initialization.
+
+## Truncation
+
+TextMorph supports four single-line compression modes:
+
+| Mode | Behavior |
+| --- | --- |
+| `.tail` | Keeps the beginning and replaces the end with an ellipsis. |
+| `.head` | Keeps the end and replaces the beginning with an ellipsis. |
+| `.middle` | Keeps both ends and replaces the middle with an ellipsis. |
+| `.none` | Draws the complete line without inserting an ellipsis. |
+
+Truncation respects extended grapheme-cluster boundaries. Window resizing
+updates the truncated representation immediately, while subsequent text
+changes continue to morph normally at the constrained width.
 
 ## Animation
 
 TextMorph includes four composed transitions:
 
-- `.default` — quick, restrained, and suitable for most labels.
+- `.default` — quick and restrained for most labels.
 - `.smooth` — critically damped with a softer response.
 - `.snappy` — faster for frequently changing controls.
 - `.bouncy` — expressive, with controlled overshoot.
 
-Use `TextMorphAnimation.disabled` to snap immediately, or define a transition:
+Define a custom transition when needed:
 
 ```swift
 let transition = TextMorphAnimation(
@@ -151,21 +180,20 @@ let transition = TextMorphAnimation(
 )
 ```
 
-`response` is the period of the corresponding undamped spring. Position, scale,
-and size use an exact damped-oscillator solution. Opacity uses a separate short,
-linear transition so text does not linger or flash when updates arrive rapidly.
+Position, scale, and size use an analytical damped-spring solution. Opacity
+uses a short linear transition so rapidly changing text does not linger or
+flash. Updates are interruptible: each new target begins from the current
+presentation position, velocity, scale, and opacity. If an exiting unit returns
+during a rapid reversal, its existing visual identity is reused.
 
-Updates are interruptible. A new target begins from the current presentation
-position, velocity, scale, and opacity. If an exiting unit returns during a
-rapid reversal, its existing visual identity is resurrected rather than
-duplicated. A ten-second safety ceiling consolidates pathological custom springs
-that do not decay, preventing an accidental undamped configuration from keeping
-the display link alive indefinitely.
+A ten-second safety ceiling consolidates pathological custom springs that do
+not decay, preventing an undamped configuration from keeping a display link
+active indefinitely.
 
 ## Reconciliation and shaping
 
-`TextMorphGranularity` controls which textual units are eligible to keep their
-identity:
+`TextMorphGranularity` controls which textual units are eligible to retain
+their identity:
 
 | Mode | Behavior |
 | --- | --- |
@@ -173,87 +201,70 @@ identity:
 | `.grapheme` | Starts with Swift `Character` boundaries. |
 | `.word` | Uses linguistically enumerated words and preserves punctuation and whitespace as graphemes. |
 
-The selected granularity is a preference, not permission to break typography.
-TextMorph shapes the complete target line with Core Text first, then coalesces
-units that cannot move independently. That includes ligatures, context-sensitive
-right-to-left runs, non-monotonic glyph runs, combining sequences, and adjacent
-glyphs whose ink overlaps. A shaping-safe word or cluster may therefore animate
-as one visual unit.
+Granularity is a preference, not permission to break typography. TextMorph
+shapes the complete target line with Core Text, then coalesces units that cannot
+move independently. This includes ligatures, context-sensitive right-to-left
+runs, non-monotonic glyph runs, combining sequences, and adjacent glyphs whose
+ink overlaps. A shaping-safe word or cluster may therefore animate as one
+visual unit.
 
-Stable identities are selected with a longest-common-subsequence reconciliation.
-For duplicate characters, equal-length solutions prefer the one with the least
-total displacement. This keeps repeated letters from crossing unnecessarily.
+Stable identities use longest-common-subsequence reconciliation. For duplicate
+characters, equal-length solutions prefer the mapping with the least total
+displacement, preventing repeated letters from crossing unnecessarily.
 
 ## Rendering and performance
 
-The hot path is intentionally small:
+The render path is native AppKit, Core Text, Core Graphics, and Core Animation:
 
 1. A text or style update shapes and rasterizes one exact full-line Core Text
    snapshot.
 2. Temporary `CALayer` objects display pixel-aligned, non-overlapping slices of
-   the immutable old and new snapshots. Slices share their backing image.
-3. One shared `CADisplayLink` advances every active TextMorph instance using the
-   target presentation timestamp.
-4. Each frame updates only position, scale, opacity, and—when requested by
-   UIKit—the presented intrinsic size. There is no per-frame text shaping,
-   measurement, or rasterization.
-5. At rest, all temporary layers are removed and replaced by one exact
-   full-line content layer.
+   immutable old and new snapshots. Slices share their backing image.
+3. An AppKit view-bound `CADisplayLink` advances the active morph at the refresh
+   cadence of the display containing that view.
+4. Frames update only position, scale, opacity, and optionally presented
+   intrinsic size. Text shaping and rasterization never occur per frame.
+5. At rest, temporary layers are removed and replaced by one exact full-line
+   layer. The display link is invalidated and sleeps completely.
 
 The spring step is analytical rather than Euler-integrated, so motion remains
-consistent across 60 Hz, 120 Hz, dropped frames, and irregular delivery. The
-display-link driver requests a 60–120 Hz range and sleeps completely when no
-morph is active. A small per-view snapshot cache avoids reshaping common rapid
-reversals and is discarded on memory pressure.
+consistent across 60 Hz, 120 Hz, dropped frames, and irregular delivery. A
+small per-view snapshot cache avoids reshaping rapid reversals.
 
-To make 120 Hz updates available on supported iPhones, the host app should add
-the following Info.plist key. The system still chooses the actual refresh rate
-based on hardware, power, thermal state, and workload.
-
-```xml
-<key>CADisableMinimumFrameDurationOnPhone</key>
-<true/>
-```
-
-See Apple's documentation for
-[`CADisplayLink`](https://developer.apple.com/documentation/quartzcore/cadisplaylink)
-and
-[`CADisableMinimumFrameDurationOnPhone`](https://developer.apple.com/documentation/bundleresources/information-property-list/cadisableminimumframedurationonphone).
-
-For pathological lines with more than 256 shaping-safe units, TextMorph
-automatically uses a whole-line transition. This bounds transient layer count
-and reconciliation work while preserving correctness. Extremely oversized
-lines also reduce their private bitmap scale to stay below a 16,384-pixel edge
-and 16-megapixel backing-store budget; typographic metrics and layout size remain
-unchanged.
+Lines with more than 256 shaping-safe units automatically use a whole-line
+transition, bounding transient layer count and reconciliation work. Extremely
+large lines also reduce private bitmap scale to stay below a 16,384-pixel edge
+and 16-megapixel backing-store budget while preserving typographic layout size.
 
 ## Accessibility and international text
 
-- VoiceOver sees the complete target string, never individual animated units.
-- Dynamic `UIColor` values are resolved again when relevant traits change.
-- Display-scale changes rebuild the raster at the new native scale.
-- Effective left-to-right and right-to-left layout direction is honored.
-- With Reduce Motion enabled, updates either crossfade—when the user prefers
-  crossfade transitions—or update immediately.
-- Entering the background or leaving a window consolidates an active morph to
-  its exact target and stops the display link.
+- VoiceOver sees one AppKit `.staticText` element containing the complete
+  target string; animated glyph layers are never exposed individually.
+- Reduce Motion replaces translation and scale with an opacity-only crossfade.
+- SwiftUI's Reduce Motion environment and AppKit's system accessibility setting
+  produce the same behavior.
+- Semantic `NSColor` values are re-resolved when effective appearance changes.
+- Moving a window between displays rebuilds snapshots at the destination
+  display's backing scale and rebinds animation timing to that view.
+- Natural, leading, and trailing alignment honor left-to-right and
+  right-to-left interface direction.
+- Detaching, hiding, minimizing, or occluding the view consolidates active
+  motion and releases its display link.
 
 ## Scope and non-goals
 
-The initial release intentionally supports one uniformly styled, single-line
-`String` per view. It does not currently lay out multiline text or accept an
-`AttributedString`/`NSAttributedString`. Use one TextMorph per independently
-morphing line.
+TextMorph supports one uniformly styled, single-line `String` per view. It does
+not currently lay out multiline text or accept `AttributedString` or
+`NSAttributedString`. Use one TextMorph for each independently morphing line.
 
-Number formatting belongs to the caller. Values such as `1,024` morph with the
-same identity and shaping rules as any other text; digits do not roll vertically
-through intermediate values.
+Number formatting belongs to the caller. A value such as `1,024` follows the
+same identity and shaping rules as any other text; digits do not roll through
+intermediate values.
 
 ## Design lineage
 
-The implementation is native Swift, Core Text, Core Graphics, and Core
-Animation. Its design was informed by the identity reconciliation and FLIP
-motion in [Torph](https://github.com/lochie/torph), the text API decisions in
+The implementation was informed by the identity reconciliation and FLIP motion
+in [Torph](https://github.com/lochie/torph), the text API decisions in
 [Calligraph](https://github.com/raphaelsalaja/calligraph), and the SwiftUI
 animation techniques explored by
 [AnimateText](https://github.com/jasudev/AnimateText) and

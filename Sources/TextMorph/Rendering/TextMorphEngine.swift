@@ -1,6 +1,5 @@
-#if canImport(UIKit)
+import AppKit
 import QuartzCore
-import UIKit
 
 @MainActor
 final class TextMorphEngine: DisplayLinkParticipant {
@@ -35,15 +34,20 @@ final class TextMorphEngine: DisplayLinkParticipant {
     private var animation = TextMorphAnimation.default
     private var layoutBounds = CGRect.zero
     private var alignment = TextMorphAlignment.natural
-    private var layoutDirection = UIUserInterfaceLayoutDirection.leftToRight
+    private var layoutDirection = NSUserInterfaceLayoutDirection.leftToRight
+    private let displayLinkDriver: DisplayLinkDriver
     private var width = ScalarSpring(value: 0)
     private var height = ScalarSpring(value: 0)
     private var isActive = false
     private var shouldNotifyCompletion = false
     private var elapsedAnimationDuration: TimeInterval = 0
 
-    init(hostLayer: CALayer) {
+    init(
+        hostLayer: CALayer,
+        displayLinkDriver: DisplayLinkDriver = DisplayLinkDriver()
+    ) {
         self.hostLayer = hostLayer
+        self.displayLinkDriver = displayLinkDriver
         fullLineLayer.contentsGravity = .resize
         fullLineLayer.minificationFilter = .linear
         fullLineLayer.magnificationFilter = .linear
@@ -77,7 +81,7 @@ final class TextMorphEngine: DisplayLinkParticipant {
     }
 
     func setInitialSnapshot(_ snapshot: TextLineSnapshot) {
-        SharedDisplayLinkDriver.shared.unregister(self)
+        displayLinkDriver.stop(self)
         removeAllTokenLayers()
         exitingTokens.removeAll(keepingCapacity: true)
         isActive = false
@@ -338,13 +342,13 @@ final class TextMorphEngine: DisplayLinkParticipant {
 
         applyLayerStates()
         isActive = true
-        SharedDisplayLinkDriver.shared.register(self)
+        displayLinkDriver.start(self)
     }
 
     func layout(
         in bounds: CGRect,
         alignment: TextMorphAlignment,
-        layoutDirection: UIUserInterfaceLayoutDirection
+        layoutDirection: NSUserInterfaceLayoutDirection
     ) {
         layoutBounds = bounds
         self.alignment = alignment
@@ -465,7 +469,7 @@ final class TextMorphEngine: DisplayLinkParticipant {
         exitingTokens.removeAll(keepingCapacity: true)
         consolidate(snapshot)
         isActive = false
-        SharedDisplayLinkDriver.shared.unregister(self)
+        displayLinkDriver.stop(self)
         onPresentationSizeChange?()
         shouldNotifyCompletion = false
         elapsedAnimationDuration = 0
@@ -568,7 +572,7 @@ private extension TextMorphEngine {
         at snapshot: TextLineSnapshot,
         notifyCompletion: Bool
     ) {
-        SharedDisplayLinkDriver.shared.unregister(self)
+        displayLinkDriver.stop(self)
         removeAllTokenLayers()
         currentSnapshot = snapshot
         width = ScalarSpring(value: Double(snapshot.metrics.size.width))
@@ -864,4 +868,3 @@ private extension CGSize {
         abs(width - other.width) > 0.001 || abs(height - other.height) > 0.001
     }
 }
-#endif

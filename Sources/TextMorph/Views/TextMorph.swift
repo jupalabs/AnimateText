@@ -1,49 +1,42 @@
-#if canImport(SwiftUI) && canImport(UIKit)
+import AppKit
 import SwiftUI
-import UIKit
 
-/// A SwiftUI view that morphs a single line of arbitrary text.
+/// A SwiftUI view that morphs a single line of arbitrary text using AppKit,
+/// Core Text, and Core Animation.
 @MainActor
 public struct TextMorph: View {
     private var text: String
-    private var uiFont: UIFont
-    private var uiColor: UIColor
+    private var appKitFont: NSFont
+    private var appKitColor: NSColor
     private var morphAnimation: TextMorphAnimation
     private var morphGranularity: TextMorphGranularity
+    private var morphTruncationMode: TextMorphTruncationMode
     private var completion: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.layoutDirection) private var layoutDirection
 
     /// Creates a morphing SwiftUI text view.
-    ///
-    /// - Parameters:
-    ///   - text: The complete target line.
-    ///   - font: The uniform font used for shaping and rendering.
-    ///   - textColor: The dynamic or fixed text color.
-    ///   - animation: The transition used when `text` changes.
-    ///   - granularity: The preferred unit of identity reconciliation.
-    ///   - onAnimationCompletion: Called when the latest uninterrupted morph
-    ///     reaches its exact target.
     public init(
         _ text: String,
-        font: UIFont = .preferredFont(forTextStyle: .body),
-        textColor: UIColor = .label,
+        font: NSFont = .preferredFont(forTextStyle: .body, options: [:]),
+        textColor: NSColor = .labelColor,
         animation: TextMorphAnimation = .default,
         granularity: TextMorphGranularity = .automatic,
+        truncationMode: TextMorphTruncationMode = .tail,
         onAnimationCompletion: (() -> Void)? = nil
     ) {
         self.text = text
-        uiFont = font
-        uiColor = textColor
+        appKitFont = font
+        appKitColor = textColor
         morphAnimation = animation
         morphGranularity = granularity
+        morphTruncationMode = truncationMode
         completion = onAnimationCompletion
     }
 
-    /// The composed morphing text content.
     public var body: some View {
-        let metrics = TextLineMetrics.measure(text: text, font: uiFont)
+        let metrics = TextLineMetrics.measure(text: text, font: appKitFont)
         let key = LayoutAnimationKey(size: metrics.size)
         let shouldAnimateLayout =
             morphAnimation.isEnabled
@@ -51,14 +44,16 @@ public struct TextMorph: View {
 
         TextMorphRepresentable(
             text: text,
-            font: uiFont,
-            color: uiColor,
+            font: appKitFont,
+            color: appKitColor,
             animation: morphAnimation,
             granularity: morphGranularity,
+            truncationMode: morphTruncationMode,
+            reduceMotion: reduceMotion,
             layoutDirection: layoutDirection,
             completion: completion
         )
-        .frame(width: metrics.size.width, height: metrics.size.height)
+        .fixedSize(horizontal: false, vertical: true)
         .animation(
             shouldAnimateLayout ? morphAnimation.swiftUIAnimation : nil,
             value: key
@@ -67,17 +62,17 @@ public struct TextMorph: View {
         .alignmentGuide(.lastTextBaseline) { _ in metrics.baseline }
     }
 
-    /// Returns a copy using the supplied UIKit font.
-    public func textFont(_ font: UIFont) -> TextMorph {
+    /// Returns a copy using the supplied AppKit font.
+    public func textFont(_ font: NSFont) -> TextMorph {
         var copy = self
-        copy.uiFont = font
+        copy.appKitFont = font
         return copy
     }
 
-    /// Returns a copy using the supplied dynamic or fixed UIKit color.
-    public func textColor(_ color: UIColor) -> TextMorph {
+    /// Returns a copy using the supplied dynamic or fixed AppKit color.
+    public func textColor(_ color: NSColor) -> TextMorph {
         var copy = self
-        copy.uiColor = color
+        copy.appKitColor = color
         return copy
     }
 
@@ -96,6 +91,15 @@ public struct TextMorph: View {
     ) -> TextMorph {
         var copy = self
         copy.morphGranularity = granularity
+        return copy
+    }
+
+    /// Returns a copy using the supplied ellipsis placement when compressed.
+    public func textTruncation(
+        _ truncationMode: TextMorphTruncationMode
+    ) -> TextMorph {
+        var copy = self
+        copy.morphTruncationMode = truncationMode
         return copy
     }
 
@@ -132,23 +136,26 @@ private extension TextMorphAnimation {
 }
 
 @MainActor
-private struct TextMorphRepresentable: UIViewRepresentable {
+private struct TextMorphRepresentable: NSViewRepresentable {
     let text: String
-    let font: UIFont
-    let color: UIColor
+    let font: NSFont
+    let color: NSColor
     let animation: TextMorphAnimation
     let granularity: TextMorphGranularity
+    let truncationMode: TextMorphTruncationMode
+    let reduceMotion: Bool
     let layoutDirection: LayoutDirection
     let completion: (() -> Void)?
 
-    func makeUIView(context: Context) -> TextMorphLabel {
-        let view = TextMorphLabel(
+    func makeNSView(context: Context) -> TextMorphView {
+        let view = TextMorphView(
             text: text,
             font: font,
             textColor: color,
             animation: animation,
             granularity: granularity,
-            textAlignment: .natural
+            textAlignment: .natural,
+            truncationMode: truncationMode
         )
         view.animatesIntrinsicContentSize = false
         view.onAnimationCompletion = completion
@@ -156,7 +163,7 @@ private struct TextMorphRepresentable: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ view: TextMorphLabel, context: Context) {
+    func updateNSView(_ view: TextMorphView, context: Context) {
         applyLayoutDirection(to: view)
         view.apply(
             text: text,
@@ -165,23 +172,40 @@ private struct TextMorphRepresentable: UIViewRepresentable {
             animation: animation,
             granularity: granularity,
             textAlignment: .natural,
+            truncationMode: truncationMode,
+            reduceMotion: reduceMotion,
             animated: !context.transaction.disablesAnimations,
             onAnimationCompletion: completion
         )
     }
 
-    static func dismantleUIView(
-        _ view: TextMorphLabel,
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: TextMorphView,
+        context: Context
+    ) -> CGSize? {
+        let ideal = nsView.idealContentSize
+        let width: CGFloat
+        if let proposedWidth = proposal.width, proposedWidth.isFinite {
+            width = min(max(proposedWidth, 0), ideal.width)
+        } else {
+            width = ideal.width
+        }
+        return CGSize(width: width, height: ideal.height)
+    }
+
+    static func dismantleNSView(
+        _ view: TextMorphView,
         coordinator: Void
     ) {
         view.onAnimationCompletion = nil
     }
 
-    private func applyLayoutDirection(to view: TextMorphLabel) {
-        view.semanticContentAttribute =
+    private func applyLayoutDirection(to view: TextMorphView) {
+        view.userInterfaceLayoutDirection =
             layoutDirection == .leftToRight
-            ? .forceLeftToRight
-            : .forceRightToLeft
+            ? .leftToRight
+            : .rightToLeft
+        view.needsLayout = true
     }
 }
-#endif

@@ -13,7 +13,6 @@ protocol DisplayLinkParticipant: AnyObject {
 /// AppKit creates display links from a view, window, or screen. Keeping one
 /// driver per morph means a window moved between displays always follows the
 /// correct refresh cadence without a process-global display assumption.
-@MainActor
 final class DisplayLinkDriver {
     @MainActor
     private final class Proxy: NSObject {
@@ -30,6 +29,7 @@ final class DisplayLinkDriver {
     private var proxy: Proxy?
     private var previousTargetTimestamp: CFTimeInterval?
 
+    @MainActor
     init(sourceView: NSView? = nil) {
         self.sourceView = sourceView
     }
@@ -38,17 +38,20 @@ final class DisplayLinkDriver {
         displayLink?.invalidate()
     }
 
+    @MainActor
     func attach(to sourceView: NSView) {
         guard self.sourceView !== sourceView else { return }
         self.sourceView = sourceView
         restartIfActive()
     }
 
+    @MainActor
     func start(_ participant: any DisplayLinkParticipant) {
         self.participant = participant
         startIfNeeded()
     }
 
+    @MainActor
     func stop(_ participant: any DisplayLinkParticipant) {
         guard self.participant === participant else { return }
         self.participant = nil
@@ -57,13 +60,14 @@ final class DisplayLinkDriver {
 
     /// Rebinds an active link after the source view moves to another window or
     /// display. Idle drivers remain asleep.
+    @MainActor
     func sourceViewEnvironmentDidChange() {
         restartIfActive()
     }
 
     /// Advances the participant directly. Tests use this deterministic seam;
     /// production calls it only from the display-link callback.
-    @discardableResult
+    @MainActor @discardableResult
     func advanceParticipant(by duration: TimeInterval) -> Bool {
         guard let participant else {
             invalidate()
@@ -79,6 +83,7 @@ final class DisplayLinkDriver {
     }
 }
 
+@MainActor
 private extension DisplayLinkDriver {
     func startIfNeeded() {
         guard displayLink == nil,

@@ -1,6 +1,5 @@
-#if canImport(UIKit)
+import AppKit
 import CoreText
-import UIKit
 
 struct TextLineMetrics: Equatable {
     let size: CGSize
@@ -8,7 +7,7 @@ struct TextLineMetrics: Equatable {
 
     static let zero = TextLineMetrics(size: .zero, baseline: 0)
 
-    static func measure(text: String, font: UIFont) -> TextLineMetrics {
+    static func measure(text: String, font: NSFont) -> TextLineMetrics {
         guard !text.isEmpty else { return .zero }
 
         let line = CTLineCreateWithAttributedString(
@@ -68,8 +67,8 @@ final class TextLineSnapshot {
 
     static func make(
         text: String,
-        font: UIFont,
-        color: UIColor,
+        font: NSFont,
+        color: NSColor,
         scale requestedScale: CGFloat,
         granularity: TextMorphGranularity
     ) -> TextLineSnapshot {
@@ -135,21 +134,32 @@ final class TextLineSnapshot {
             height: CGFloat(pixelHeight) / scale
         )
 
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = scale
-        format.opaque = false
-        format.preferredRange = .standard
-        let renderer = UIGraphicsImageRenderer(size: rendererSize, format: format)
-        let renderedImage = renderer.image { rendererContext in
-            let context = rendererContext.cgContext
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)
+            ?? CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo.byteOrder32Big.rawValue
+            | CGImageAlphaInfo.premultipliedLast.rawValue
+        let context = CGContext(
+            data: nil,
+            width: pixelWidth,
+            height: pixelHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: pixelWidth * 4,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        )
+        let cgImage: CGImage?
+        if let context {
             context.saveGState()
+            context.scaleBy(x: scale, y: scale)
             context.translateBy(x: -canvas.minX, y: canvas.maxY)
             context.scaleBy(x: 1, y: -1)
             context.textPosition = .zero
             CTLineDraw(line, context)
             context.restoreGState()
+            cgImage = context.makeImage()
+        } else {
+            cgImage = nil
         }
-        let cgImage = renderedImage.cgImage
 
         let rawSegments = TextSegmenter.segments(
             in: text,
@@ -795,4 +805,3 @@ private extension CGRect {
         )
     }
 }
-#endif
