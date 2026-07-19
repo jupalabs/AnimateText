@@ -42,12 +42,16 @@ struct TextVisualUnit {
 
 @MainActor
 final class TextLineSnapshot {
+    static let maximumIndividuallyAnimatedUnitCount = 256
+
     let text: String
     let metrics: TextLineMetrics
     let image: CGImage?
     let scale: CGFloat
     let fullFrame: CGRect
     let units: [TextVisualUnit]
+    let requiresWholeLineAnimation: Bool
+    let containsInk: Bool
 
     private init(
         text: String,
@@ -55,7 +59,9 @@ final class TextLineSnapshot {
         image: CGImage?,
         scale: CGFloat,
         fullFrame: CGRect,
-        units: [TextVisualUnit]
+        units: [TextVisualUnit],
+        requiresWholeLineAnimation: Bool,
+        containsInk: Bool
     ) {
         self.text = text
         self.metrics = metrics
@@ -63,6 +69,8 @@ final class TextLineSnapshot {
         self.scale = scale
         self.fullFrame = fullFrame
         self.units = units
+        self.requiresWholeLineAnimation = requiresWholeLineAnimation
+        self.containsInk = containsInk
     }
 
     static func make(
@@ -79,7 +87,9 @@ final class TextLineSnapshot {
                 image: nil,
                 scale: max(requestedScale, 1),
                 fullFrame: .zero,
-                units: []
+                units: [],
+                requiresWholeLineAnimation: false,
+                containsInk: false
             )
         }
 
@@ -117,6 +127,7 @@ final class TextLineSnapshot {
         if imageBounds.hasFiniteArea {
             drawingBounds = drawingBounds.union(imageBounds)
         }
+        let containsInk = imageBounds.hasFiniteArea
 
         let scale = safeRasterScale(
             for: drawingBounds,
@@ -140,15 +151,20 @@ final class TextLineSnapshot {
         let bitmapInfo =
             CGBitmapInfo.byteOrder32Big.rawValue
             | CGImageAlphaInfo.premultipliedLast.rawValue
-        let context = CGContext(
-            data: nil,
-            width: pixelWidth,
-            height: pixelHeight,
-            bitsPerComponent: 8,
-            bytesPerRow: pixelWidth * 4,
-            space: colorSpace,
-            bitmapInfo: bitmapInfo
-        )
+        let context: CGContext?
+        if containsInk {
+            context = CGContext(
+                data: nil,
+                width: pixelWidth,
+                height: pixelHeight,
+                bitsPerComponent: 8,
+                bytesPerRow: pixelWidth * 4,
+                space: colorSpace,
+                bitmapInfo: bitmapInfo
+            )
+        } else {
+            context = nil
+        }
         let cgImage: CGImage?
         if let context {
             context.saveGState()
@@ -166,25 +182,37 @@ final class TextLineSnapshot {
             cgImage = nil
         }
 
-        let rawSegments = TextSegmenter.segments(
-            in: text,
-            granularity: granularity
-        )
-        let units = makeVisualUnits(
-            text: text,
-            line: line,
-            segments: rawSegments,
-            canvas: canvas,
-            metrics: metrics,
-            imagePixelWidth: cgImage?.width ?? pixelWidth,
-            scale: scale
-        )
         let fullFrame = CGRect(
             x: canvas.minX,
             y: metrics.baseline - canvas.maxY,
             width: rendererSize.width,
             height: rendererSize.height
         )
+        let rawSegments = TextSegmenter.segments(
+            in: text,
+            granularity: granularity
+        )
+        let requiresWholeLineAnimation =
+            rawSegments.count > Self.maximumIndividuallyAnimatedUnitCount
+        let units =
+            requiresWholeLineAnimation
+            ? [
+                wholeLineUnit(
+                    text: text,
+                    metrics: metrics,
+                    fullFrame: fullFrame,
+                    hasInk: containsInk
+                )
+            ]
+            : makeVisualUnits(
+                text: text,
+                line: line,
+                segments: rawSegments,
+                canvas: canvas,
+                metrics: metrics,
+                imagePixelWidth: cgImage?.width ?? pixelWidth,
+                scale: scale
+            )
 
         return TextLineSnapshot(
             text: text,
@@ -192,36 +220,25 @@ final class TextLineSnapshot {
             image: cgImage,
             scale: scale,
             fullFrame: fullFrame,
-            units: units
+            units: units,
+            requiresWholeLineAnimation: requiresWholeLineAnimation,
+            containsInk: containsInk
         )
     }
 
     func animationUnits(maximumCount: Int) -> [TextVisualUnit] {
-        guard units.count > maximumCount else { return units }
+        guard requiresWholeLineAnimation || units.count > maximumCount else {
+            return units
+        }
         guard image != nil, fullFrame.width > 0, fullFrame.height > 0 else {
             return []
         }
-
-        let anchor = CGPoint(
-            x: metrics.size.width / 2,
-            y: metrics.baseline
-        )
         return [
-            TextVisualUnit(
-                value: text,
-                range: NSRange(location: 0, length: (text as NSString).length),
-                anchor: anchor,
-                layerBounds: CGRect(origin: .zero, size: fullFrame.size),
-                layerAnchorPoint: CGPoint(
-                    x: fullFrame.width > 0
-                        ? (anchor.x - fullFrame.minX) / fullFrame.width
-                        : 0.5,
-                    y: fullFrame.height > 0
-                        ? (anchor.y - fullFrame.minY) / fullFrame.height
-                        : 0.5
-                ),
-                contentsRect: CGRect(x: 0, y: 0, width: 1, height: 1),
-                hasInk: true
+            Self.wholeLineUnit(
+                text: text,
+                metrics: metrics,
+                fullFrame: fullFrame,
+                hasInk: containsInk
             )
         ]
     }
@@ -230,6 +247,34 @@ final class TextLineSnapshot {
 private extension TextLineSnapshot {
     static let maximumRasterDimension: CGFloat = 16_384
     static let maximumRasterPixelCount: CGFloat = 16_777_216
+
+    static func wholeLineUnit(
+        text: String,
+        metrics: TextLineMetrics,
+        fullFrame: CGRect,
+        hasInk: Bool
+    ) -> TextVisualUnit {
+        let anchor = CGPoint(
+            x: metrics.size.width / 2,
+            y: metrics.baseline
+        )
+        return TextVisualUnit(
+            value: text,
+            range: NSRange(location: 0, length: (text as NSString).length),
+            anchor: anchor,
+            layerBounds: CGRect(origin: .zero, size: fullFrame.size),
+            layerAnchorPoint: CGPoint(
+                x: fullFrame.width > 0
+                    ? (anchor.x - fullFrame.minX) / fullFrame.width
+                    : 0.5,
+                y: fullFrame.height > 0
+                    ? (anchor.y - fullFrame.minY) / fullFrame.height
+                    : 0.5
+            ),
+            contentsRect: CGRect(x: 0, y: 0, width: 1, height: 1),
+            hasInk: hasInk
+        )
+    }
 
     static func safeRasterScale(
         for bounds: CGRect,
@@ -418,34 +463,40 @@ private extension TextLineSnapshot {
         boundaries[visualOrder.count] = canvas.maxX
 
         if visualOrder.count > 1 {
+            var nearestInkMaximumToLeft = Array(
+                repeating: -CGFloat.infinity,
+                count: visualOrder.count
+            )
+            var leftInkMaximum = -CGFloat.infinity
+            for visualIndex in visualOrder.indices {
+                let ink = groups[visualOrder[visualIndex]].inkBounds
+                if ink.hasFiniteArea {
+                    leftInkMaximum = ink.maxX + safety
+                }
+                nearestInkMaximumToLeft[visualIndex] = leftInkMaximum
+            }
+
+            var nearestInkMinimumToRight = Array(
+                repeating: CGFloat.infinity,
+                count: visualOrder.count
+            )
+            var rightInkMinimum = CGFloat.infinity
+            for visualIndex in visualOrder.indices.reversed() {
+                let ink = groups[visualOrder[visualIndex]].inkBounds
+                if ink.hasFiniteArea {
+                    rightInkMinimum = ink.minX - safety
+                }
+                nearestInkMinimumToRight[visualIndex] = rightInkMinimum
+            }
+
             for visualIndex in 0..<(visualOrder.count - 1) {
                 let lhs = groups[visualOrder[visualIndex]]
                 let rhs = groups[visualOrder[visualIndex + 1]]
                 let desired =
                     (lhs.typographicExtent.maximum
                         + rhs.typographicExtent.minimum) / 2
-
-                var lowerBound = -CGFloat.infinity
-                for searchIndex in stride(
-                    from: visualIndex,
-                    through: 0,
-                    by: -1
-                ) {
-                    let ink = groups[visualOrder[searchIndex]].inkBounds
-                    if ink.hasFiniteArea {
-                        lowerBound = ink.maxX + safety
-                        break
-                    }
-                }
-
-                var upperBound = CGFloat.infinity
-                for searchIndex in (visualIndex + 1)..<visualOrder.count {
-                    let ink = groups[visualOrder[searchIndex]].inkBounds
-                    if ink.hasFiniteArea {
-                        upperBound = ink.minX - safety
-                        break
-                    }
-                }
+                let lowerBound = nearestInkMaximumToLeft[visualIndex]
+                let upperBound = nearestInkMinimumToRight[visualIndex + 1]
 
                 let boundary: CGFloat
                 if lowerBound <= upperBound {
@@ -613,6 +664,9 @@ private extension TextLineSnapshot {
                     segments: segments
                 )
                 disjointSet.mergeContiguous(clusterSegmentIndices)
+                let clusterIsWhitespace = clusterSegmentIndices.allSatisfy {
+                    segments[$0].value.allSatisfy(\.isWhitespace)
+                }
 
                 guard
                     let glyphIndices = glyphIndicesByStringStart[rawStart],
@@ -633,16 +687,18 @@ private extension TextLineSnapshot {
                                 + advances[glyphIndex].width
                         )
                     )
-                    let glyphInk = CTRunGetImageBounds(
-                        run,
-                        nil,
-                        CFRange(location: glyphIndex, length: 1)
-                    )
-                    if glyphInk.hasFiniteArea {
-                        inkBounds =
-                            inkBounds.hasFiniteArea
-                            ? inkBounds.union(glyphInk)
-                            : glyphInk
+                    if !clusterIsWhitespace {
+                        let glyphInk = CTRunGetImageBounds(
+                            run,
+                            nil,
+                            CFRange(location: glyphIndex, length: 1)
+                        )
+                        if glyphInk.hasFiniteArea {
+                            inkBounds =
+                                inkBounds.hasFiniteArea
+                                ? inkBounds.union(glyphInk)
+                                : glyphInk
+                        }
                     }
                 }
 
@@ -718,6 +774,7 @@ private extension TextLineSnapshot {
             }
         }
 
+        let nsText = text as NSString
         return groupedIndices.enumerated().map { groupIndex, indices in
             let firstRange = segments[indices[0]].range
             let lastRange = segments[indices[indices.count - 1]].range
@@ -746,7 +803,7 @@ private extension TextLineSnapshot {
             return ShapingGroup(
                 segmentIndices: indices,
                 range: range,
-                value: (text as NSString).substring(with: range),
+                value: nsText.substring(with: range),
                 typographicExtent: typographicExtent,
                 inkBounds: clusterInkBounds[groupIndex]
             )

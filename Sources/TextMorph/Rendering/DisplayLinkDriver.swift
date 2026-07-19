@@ -28,6 +28,7 @@ final class DisplayLinkDriver {
     private var displayLink: CADisplayLink?
     private var proxy: Proxy?
     private var previousTargetTimestamp: CFTimeInterval?
+    private var registrationGeneration: UInt64 = 0
 
     @MainActor
     init(sourceView: NSView? = nil) {
@@ -39,14 +40,8 @@ final class DisplayLinkDriver {
     }
 
     @MainActor
-    func attach(to sourceView: NSView) {
-        guard self.sourceView !== sourceView else { return }
-        self.sourceView = sourceView
-        restartIfActive()
-    }
-
-    @MainActor
     func start(_ participant: any DisplayLinkParticipant) {
+        registrationGeneration &+= 1
         self.participant = participant
         startIfNeeded()
     }
@@ -54,6 +49,7 @@ final class DisplayLinkDriver {
     @MainActor
     func stop(_ participant: any DisplayLinkParticipant) {
         guard self.participant === participant else { return }
+        registrationGeneration &+= 1
         self.participant = nil
         invalidate()
     }
@@ -74,8 +70,13 @@ final class DisplayLinkDriver {
             return false
         }
 
+        let advancedGeneration = registrationGeneration
         let needsAnotherFrame = participant.advanceFrame(by: duration)
-        if !needsAnotherFrame, self.participant === participant {
+        if !needsAnotherFrame,
+            registrationGeneration == advancedGeneration,
+            self.participant === participant
+        {
+            registrationGeneration &+= 1
             self.participant = nil
             invalidate()
         }

@@ -42,11 +42,12 @@ struct LinearTransition: Equatable, Sendable {
             remaining -= consumed
         }
 
-        guard delayRemaining == 0, remaining > 0 else { return }
+        guard delayRemaining == 0 else { return }
         guard self.duration > 0 else {
             value = target
             return
         }
+        guard remaining > 0 else { return }
 
         elapsed = min(elapsed + remaining, self.duration)
         let progress = elapsed / self.duration

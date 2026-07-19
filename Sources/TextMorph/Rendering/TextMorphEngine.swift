@@ -18,7 +18,8 @@ final class TextMorphEngine: DisplayLinkParticipant {
         case crossfade
     }
 
-    static let maximumAnimatedUnitCount = 256
+    static let maximumAnimatedUnitCount =
+        TextLineSnapshot.maximumIndividuallyAnimatedUnitCount
     static let maximumAnimationDuration: TimeInterval = 10
 
     var onPresentationSizeChange: (() -> Void)?
@@ -144,8 +145,10 @@ final class TextMorphEngine: DisplayLinkParticipant {
         } else {
             let oldUnitCount = currentSnapshot?.units.count ?? oldTokens.count
             let shouldUseWholeLine =
-                max(oldUnitCount, snapshot.units.count)
-                > Self.maximumAnimatedUnitCount
+                currentSnapshot?.requiresWholeLineAnimation == true
+                || snapshot.requiresWholeLineAnimation
+                || max(oldUnitCount, snapshot.units.count)
+                    > Self.maximumAnimatedUnitCount
             newUnits = snapshot.animationUnits(
                 maximumCount: shouldUseWholeLine ? 0 : Self.maximumAnimatedUnitCount
             )
@@ -205,9 +208,11 @@ final class TextMorphEngine: DisplayLinkParticipant {
 
         let resurrectionCandidateCount = exitingTokens.count
         let movementScale = max(reconciliation.changeRatio, 0.35)
-        let verticalDistance =
+        let proposedVerticalDistance =
             Double(fontSize) * animation.verticalOffset
             * movementScale
+        let verticalDistance =
+            proposedVerticalDistance.isFinite ? proposedVerticalDistance : 0
 
         performWithoutLayerActions {
             for newIndex in reconciliation.insertionIndices {
@@ -384,7 +389,7 @@ final class TextMorphEngine: DisplayLinkParticipant {
 
     func advanceFrame(by duration: TimeInterval) -> Bool {
         guard isActive else { return false }
-        guard duration <= 0.25 else {
+        guard duration.isFinite, duration >= 0, duration <= 0.25 else {
             finishCurrentAnimation(
                 notifyCompletion: shouldNotifyCompletion
             )
@@ -783,7 +788,7 @@ private extension TextMorphEngine {
 
     func showFullLine(_ snapshot: TextLineSnapshot) {
         performWithoutLayerActions {
-            guard let image = snapshot.image else {
+            guard snapshot.containsInk, let image = snapshot.image else {
                 removeFullLineLayer()
                 return
             }

@@ -104,16 +104,12 @@ final class TextReconcilerTests: XCTestCase {
         var result: [[String]] = [[]]
         guard maximumLength > 0 else { return result }
 
+        var level: [[String]] = [[]]
         for _ in 1...maximumLength {
-            let previousLevel = result.filter { $0.count == (result.last?.count ?? 0) }
-            _ = previousLevel
-            let existing = result
-            let nextLength = (result.map(\.count).max() ?? 0) + 1
-            for sequence in existing where sequence.count == nextLength - 1 {
-                for value in alphabet {
-                    result.append(sequence + [value])
-                }
+            level = level.flatMap { sequence in
+                alphabet.map { sequence + [$0] }
             }
+            result.append(contentsOf: level)
         }
         return result
     }

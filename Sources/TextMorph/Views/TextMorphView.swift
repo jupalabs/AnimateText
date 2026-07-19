@@ -34,6 +34,7 @@ public final class TextMorphView: NSView {
     private var renderedText = ""
     private var lastSnapshotScale: CGFloat = 0
     private var suppressesPropertyRebuild = false
+    private var hasResolvedLayoutWidth = false
     private var snapshotCache: [SnapshotCacheEntry] = []
     private var reduceMotionOverride: Bool?
 
@@ -216,6 +217,7 @@ public final class TextMorphView: NSView {
 
     public override func layout() {
         super.layout()
+        hasResolvedLayoutWidth = true
         rebuildForAvailableWidthIfNeeded()
         morphEngine.layout(
             in: bounds,
@@ -227,21 +229,23 @@ public final class TextMorphView: NSView {
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         registerWindowObservers()
-        displayLinkDriver.sourceViewEnvironmentDidChange()
 
         guard window != nil else {
             morphEngine.cancelForRemovalFromWindow()
             return
         }
 
-        rebuildForBackingScaleIfNeeded()
+        if !rebuildForBackingScaleIfNeeded() {
+            displayLinkDriver.sourceViewEnvironmentDidChange()
+        }
         needsLayout = true
     }
 
     public override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
-        displayLinkDriver.sourceViewEnvironmentDidChange()
-        rebuildForBackingScaleIfNeeded()
+        if !rebuildForBackingScaleIfNeeded() {
+            displayLinkDriver.sourceViewEnvironmentDidChange()
+        }
     }
 
     public override func viewDidChangeEffectiveAppearance() {
@@ -264,6 +268,12 @@ extension TextMorphView {
         renderedText
     }
 
+    func prepareForDismantling() {
+        onAnimationCompletion = nil
+        morphEngine.cancelForRemovalFromWindow()
+        snapshotCache.removeAll(keepingCapacity: false)
+    }
+
     func apply(
         text: String,
         font: NSFont,
@@ -283,6 +293,7 @@ extension TextMorphView {
             || self.truncationMode != truncationMode
         let alignmentChanged = self.textAlignment != textAlignment
         let textChanged = storedText != text
+        let reducedMotionBecameEnabled = reduceMotionOverride != true && reduceMotion
 
         suppressesPropertyRebuild = true
         self.font = font
@@ -306,6 +317,14 @@ extension TextMorphView {
             rebuildForStyleChange()
         } else if alignmentChanged {
             needsLayout = true
+        }
+
+        if !textChanged,
+            !styleChanged,
+            reducedMotionBecameEnabled,
+            animation.respectsReducedMotion
+        {
+            morphEngine.finishCurrentAnimation(notifyCompletion: true)
         }
     }
 }
@@ -395,7 +414,7 @@ private extension TextMorphView {
     }
 
     func displayedText(for availableWidth: CGFloat) -> String {
-        guard availableWidth > 0 else { return storedText }
+        guard hasResolvedLayoutWidth else { return storedText }
         return TextTruncator.truncate(
             storedText,
             toWidth: availableWidth,
@@ -478,14 +497,15 @@ private extension TextMorphView {
         rebuildSnapshotWithoutAnimation()
     }
 
-    func rebuildForBackingScaleIfNeeded() {
+    @discardableResult
+    func rebuildForBackingScaleIfNeeded() -> Bool {
         guard lastSnapshotScale > 0,
             abs(effectiveDisplayScale - lastSnapshotScale) > 0.001
         else {
-            return
+            return false
         }
-        displayLinkDriver.sourceViewEnvironmentDidChange()
         rebuildSnapshotWithoutAnimation()
+        return true
     }
 
     func rebuildSnapshotWithoutAnimation() {
@@ -503,7 +523,7 @@ private extension TextMorphView {
     }
 
     func isHorizontallyConstrained(naturalWidth: CGFloat) -> Bool {
-        bounds.width > 0 && bounds.width + 0.5 < naturalWidth
+        hasResolvedLayoutWidth && bounds.width + 0.5 < naturalWidth
     }
 
     func registerWindowObservers() {
@@ -535,8 +555,9 @@ private extension TextMorphView {
 
     @objc func windowEnvironmentDidChange(_ notification: Notification) {
         if notification.name == NSWindow.didChangeScreenNotification {
-            displayLinkDriver.sourceViewEnvironmentDidChange()
-            rebuildForBackingScaleIfNeeded()
+            if !rebuildForBackingScaleIfNeeded() {
+                displayLinkDriver.sourceViewEnvironmentDidChange()
+            }
         } else if !canAnimate {
             morphEngine.cancelForRemovalFromWindow()
         }

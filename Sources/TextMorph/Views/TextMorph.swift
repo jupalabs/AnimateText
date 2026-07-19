@@ -198,7 +198,7 @@ private struct TextMorphRepresentable: NSViewRepresentable {
         _ view: TextMorphView,
         coordinator: Void
     ) {
-        view.onAnimationCompletion = nil
+        view.prepareForDismantling()
     }
 
     private func applyLayoutDirection(to view: TextMorphView) {

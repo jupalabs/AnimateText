@@ -35,8 +35,6 @@ final class LinearTransitionTests: XCTestCase {
         transition.advance(by: 0.01)
         XCTAssertEqual(transition.value, 0)
         transition.advance(by: 0.01)
-        XCTAssertEqual(transition.value, 0)
-        transition.advance(by: 0.001)
         XCTAssertEqual(transition.value, 1)
         XCTAssertTrue(transition.isSettled)
     }

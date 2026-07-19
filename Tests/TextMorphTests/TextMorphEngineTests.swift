@@ -16,6 +16,21 @@ private final class SelfRemovingDisplayLinkParticipant: DisplayLinkParticipant {
 }
 
 @MainActor
+private final class ReRegisteringDisplayLinkParticipant: DisplayLinkParticipant {
+    private(set) var callCount = 0
+    weak var driver: DisplayLinkDriver?
+
+    func advanceFrame(by duration: TimeInterval) -> Bool {
+        callCount += 1
+        if callCount == 1 {
+            driver?.stop(self)
+            driver?.start(self)
+        }
+        return false
+    }
+}
+
+@MainActor
 final class TextMorphEngineTests: XCTestCase {
     func testSharedIdentitySurvivesContinueToConfirm() throws {
         let fixture = makeFixture(text: "Continue")
@@ -122,6 +137,46 @@ final class TextMorphEngineTests: XCTestCase {
         fixture.engine.finishCurrentAnimation(notifyCompletion: false)
     }
 
+    func testMaterializedSliceLayersRenderUprightInAFlippedAppKitView() throws {
+        let font = NSFont.systemFont(ofSize: 96, weight: .black)
+        let snapshot = TextLineSnapshot.make(
+            text: "FFF",
+            font: font,
+            color: .white,
+            scale: 2,
+            granularity: .grapheme
+        )
+        let hostView = FlippedLayerHostView(
+            frame: CGRect(origin: .zero, size: snapshot.metrics.size)
+        )
+        let hostLayer = try XCTUnwrap(hostView.layer)
+        let engine = TextMorphEngine(hostLayer: hostLayer)
+        engine.layout(
+            in: hostView.bounds,
+            alignment: .leading,
+            layoutDirection: .leftToRight
+        )
+        engine.setInitialSnapshot(snapshot)
+        engine.layout(
+            in: hostView.bounds,
+            alignment: .leading,
+            layoutDirection: .leftToRight
+        )
+
+        engine.update(
+            to: snapshot,
+            animation: .default,
+            animated: true,
+            fontSize: font.pointSize
+        )
+
+        XCTAssertEqual(hostLayer.sublayers?.count, 3)
+        try LayerRenderingTestSupport.assertTopHeavyGlyphsRenderUpright(
+            in: hostView
+        )
+        engine.finishCurrentAnimation(notifyCompletion: false)
+    }
+
     func testCrossfadeDoesNotTranslateOutgoingText() throws {
         let fixture = makeFixture(text: "Continue")
         let originalPosition = try XCTUnwrap(
@@ -141,6 +196,22 @@ final class TextMorphEngineTests: XCTestCase {
         XCTAssertEqual(exit.target, originalPosition)
     }
 
+    func testLongLineTransitionBoundsBothSidesToWholeLineVisuals() {
+        let longText = String(repeating: "a", count: 300)
+        let fixture = makeFixture(text: longText)
+
+        fixture.engine.update(
+            to: snapshot("Short"),
+            animation: .default,
+            animated: true,
+            fontSize: 32
+        )
+
+        XCTAssertEqual(fixture.engine.debugTargetTokens.count, 1)
+        XCTAssertEqual(fixture.engine.debugExitingTokens.count, 1)
+        XCTAssertEqual(fixture.host.sublayers?.count, 2)
+    }
+
     func testDisplayLinkAdvanceToleratesSynchronousStop() {
         let driver = DisplayLinkDriver()
         let selfRemoving = SelfRemovingDisplayLinkParticipant()
@@ -151,6 +222,52 @@ final class TextMorphEngineTests: XCTestCase {
         XCTAssertFalse(driver.advanceParticipant(by: 1.0 / 120))
 
         XCTAssertEqual(selfRemoving.callCount, 1)
+    }
+
+    func testOldCallbackCannotClearASynchronousReplacementRegistration() {
+        let driver = DisplayLinkDriver()
+        let participant = ReRegisteringDisplayLinkParticipant()
+        participant.driver = driver
+        driver.start(participant)
+
+        XCTAssertFalse(driver.advanceParticipant(by: 1.0 / 120))
+        XCTAssertEqual(participant.callCount, 1)
+
+        XCTAssertFalse(driver.advanceParticipant(by: 1.0 / 120))
+        XCTAssertFalse(driver.advanceParticipant(by: 1.0 / 120))
+        XCTAssertEqual(participant.callCount, 2)
+    }
+
+    func testCompletionCanSynchronouslyStartTheNextMorph() {
+        let fixture = makeFixture(text: "Continue")
+        let engine = fixture.engine
+        var completionCount = 0
+        engine.onCompletion = { [unowned engine] in
+            completionCount += 1
+            if completionCount == 1 {
+                engine.update(
+                    to: self.snapshot("Done"),
+                    animation: .default,
+                    animated: true,
+                    fontSize: 32
+                )
+            }
+        }
+        engine.update(
+            to: snapshot("Confirm"),
+            animation: .default,
+            animated: true,
+            fontSize: 32
+        )
+
+        for _ in 0..<1_200 where engine.debugIsActive {
+            _ = fixture.driver.advanceParticipant(by: 1.0 / 120)
+        }
+
+        XCTAssertEqual(completionCount, 2)
+        XCTAssertFalse(engine.debugIsActive)
+        XCTAssertEqual(engine.debugTargetTokens.map(\.value), Array("Done").map(String.init))
+        XCTAssertEqual(fixture.host.sublayers?.count, 1)
     }
 
     func testUndampedCustomSpringCannotKeepTheDisplayLinkAliveForever() {
@@ -172,6 +289,22 @@ final class TextMorphEngineTests: XCTestCase {
 
         XCTAssertFalse(fixture.engine.debugIsActive)
         XCTAssertEqual(fixture.host.sublayers?.count, 1)
+    }
+
+    func testInvalidFrameDurationConsolidatesInsteadOfPoisoningMotionState() {
+        for duration in [TimeInterval.nan, -.infinity, -0.001, 0.251] {
+            let fixture = makeFixture(text: "Continue")
+            fixture.engine.update(
+                to: snapshot("Confirm"),
+                animation: .default,
+                animated: true,
+                fontSize: 32
+            )
+
+            XCTAssertFalse(fixture.engine.advanceFrame(by: duration))
+            XCTAssertFalse(fixture.engine.debugIsActive)
+            XCTAssertEqual(fixture.host.sublayers?.count, 1)
+        }
     }
 
     func testOnlyTheLatestInterruptedGenerationCompletes() {
@@ -201,10 +334,16 @@ final class TextMorphEngineTests: XCTestCase {
         XCTAssertEqual(completionCount, 1)
     }
 
-    private func makeFixture(text: String) -> (engine: TextMorphEngine, host: CALayer) {
+    private func makeFixture(
+        text: String
+    ) -> (engine: TextMorphEngine, host: CALayer, driver: DisplayLinkDriver) {
         let host = CALayer()
         host.bounds = CGRect(x: 0, y: 0, width: 400, height: 80)
-        let engine = TextMorphEngine(hostLayer: host)
+        let driver = DisplayLinkDriver()
+        let engine = TextMorphEngine(
+            hostLayer: host,
+            displayLinkDriver: driver
+        )
         engine.layout(
             in: host.bounds,
             alignment: .leading,
@@ -216,7 +355,7 @@ final class TextMorphEngineTests: XCTestCase {
             alignment: .leading,
             layoutDirection: .leftToRight
         )
-        return (engine, host)
+        return (engine, host, driver)
     }
 
     private func snapshot(_ text: String) -> TextLineSnapshot {

@@ -80,6 +80,17 @@ public struct TextMorphAnimation: Hashable, Sendable {
             verticalOffset.isFinite && verticalOffset >= 0,
             "verticalOffset must be finite and cannot be negative"
         )
+        let naturalFrequency = 2 * Double.pi / response
+        let stiffness = naturalFrequency * naturalFrequency
+        let damping = 2 * dampingRatio * naturalFrequency
+        precondition(
+            naturalFrequency.isFinite
+                && naturalFrequency > 0
+                && stiffness.isFinite
+                && stiffness > 0
+                && damping.isFinite,
+            "response and dampingRatio must produce finite spring coefficients"
+        )
 
         self.isEnabled = isEnabled
         self.response = response

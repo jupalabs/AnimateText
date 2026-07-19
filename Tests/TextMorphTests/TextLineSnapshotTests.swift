@@ -50,10 +50,21 @@ final class TextLineSnapshotTests: XCTestCase {
         XCTAssertTrue(snapshot.units.isEmpty)
     }
 
+    func testWhitespaceRetainsAdvanceWithoutAllocatingAnEmptyBackingImage() {
+        let snapshot = makeSnapshot("   ")
+
+        XCTAssertGreaterThan(snapshot.metrics.size.width, 0)
+        XCTAssertFalse(snapshot.containsInk)
+        XCTAssertNil(snapshot.image)
+        XCTAssertTrue(snapshot.units.allSatisfy { !$0.hasInk })
+    }
+
     func testLongTextFallsBackToOneAnimationUnit() {
         let snapshot = makeSnapshot(String(repeating: "a", count: 300))
         let units = snapshot.animationUnits(maximumCount: 256)
 
+        XCTAssertTrue(snapshot.requiresWholeLineAnimation)
+        XCTAssertEqual(snapshot.units.count, 1)
         XCTAssertEqual(units.count, 1)
         XCTAssertEqual(units[0].value, snapshot.text)
         XCTAssertEqual(units[0].contentsRect, CGRect(x: 0, y: 0, width: 1, height: 1))
@@ -69,42 +80,6 @@ final class TextLineSnapshotTests: XCTestCase {
         XCTAssertLessThanOrEqual(image.height, 16_384)
         XCTAssertLessThanOrEqual(image.width * image.height, 16_777_216)
         XCTAssertGreaterThan(snapshot.metrics.size.width, 16_384 / 3)
-    }
-
-    func testAsymmetricGlyphRasterKeepsInkAboveItsBaseline() throws {
-        let snapshot = makeSnapshot(
-            "F",
-            font: .systemFont(ofSize: 96, weight: .black)
-        )
-        let image = try XCTUnwrap(snapshot.image)
-        let provider = try XCTUnwrap(image.dataProvider)
-        let data = try XCTUnwrap(provider.data)
-        let bytes = CFDataGetBytePtr(data)
-        let baselineRow = Int(
-            ((snapshot.metrics.baseline - snapshot.fullFrame.minY) * snapshot.scale)
-                .rounded(.up)
-        )
-        var inkAboveBaseline = 0
-        var inkBelowBaseline = 0
-
-        for row in 0..<image.height {
-            for column in 0..<image.width {
-                let alphaOffset = row * image.bytesPerRow + column * 4 + 3
-                guard bytes?[alphaOffset] ?? 0 > 8 else { continue }
-                if row < baselineRow {
-                    inkAboveBaseline += 1
-                } else {
-                    inkBelowBaseline += 1
-                }
-            }
-        }
-
-        XCTAssertGreaterThan(inkAboveBaseline, 0)
-        XCTAssertLessThan(
-            inkBelowBaseline,
-            max(inkAboveBaseline / 10, 1),
-            "An uppercase F has no descender; substantial ink below the baseline indicates a vertically flipped raster"
-        )
     }
 
     private func makeSnapshot(

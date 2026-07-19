@@ -21,6 +21,19 @@ final class TextMorphViewTests: XCTestCase {
         XCTAssertGreaterThan(view.intrinsicContentSize.height, 0)
     }
 
+    func testInitialLayerContentsRenderUpright() throws {
+        let view = TextMorphView(
+            text: "F",
+            font: .systemFont(ofSize: 96, weight: .black),
+            textColor: .white
+        )
+        view.frame = CGRect(origin: .zero, size: view.intrinsicContentSize)
+
+        try LayerRenderingTestSupport.assertTopHeavyGlyphsRenderUpright(
+            in: view
+        )
+    }
+
     func testOffWindowUpdateFinishesImmediatelyAndExactlyOnce() {
         let view = TextMorphView(text: "Continue")
         var completionCount = 0
@@ -78,5 +91,20 @@ final class TextMorphViewTests: XCTestCase {
             view.intrinsicContentSize,
             TextLineMetrics.measure(text: "ABCDEFGHIJ", font: font).size
         )
+    }
+
+    func testResolvedZeroWidthDoesNotRenderOutsideItsProposedBounds() {
+        let view = TextMorphView(
+            text: "ABCDEFGHIJ",
+            truncationMode: .tail
+        )
+        view.frame = CGRect(x: 0, y: 0, width: 0, height: 40)
+
+        view.layout()
+
+        XCTAssertEqual(view.debugRenderedText, "")
+        XCTAssertEqual(view.accessibilityValue() as? String, "ABCDEFGHIJ")
+        XCTAssertGreaterThan(view.intrinsicContentSize.width, 0)
+        XCTAssertNil(view.layer?.sublayers)
     }
 }
