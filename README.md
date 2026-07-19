@@ -244,6 +244,8 @@ transient layer count and reconciliation work. Whitespace-only lines preserve
 their typographic advance without allocating an empty bitmap. Extremely large
 visible lines reduce private bitmap scale to stay below a 16,384-pixel edge and
 16-megapixel backing-store budget while preserving typographic layout size.
+Interrupted outgoing work is separately capped at 256 units, 16 snapshot
+generations, and 16 megapixels of retained raster data.
 
 ## Accessibility and international text
 

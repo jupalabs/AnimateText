@@ -138,7 +138,7 @@ final class TextMorphViewTests: XCTestCase {
         try LayerRenderingTestSupport.assertViewContainsRedInk(view)
     }
 
-    func testSameTruncatedTargetWaitsForActiveMorphAndCompletesOnce() throws {
+    func testSameTruncatedTargetWaitsForActiveMorphAndCompletesOnce() {
         let view = TextMorphView(text: "ABCDEFGHIJ")
         view.frame = CGRect(x: 0, y: 0, width: 70, height: 40)
         view.layout()

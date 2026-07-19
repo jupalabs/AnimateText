@@ -37,6 +37,9 @@ public final class TextMorphView: NSView {
     private var hasResolvedLayoutWidth = false
     private var snapshotCache: [SnapshotCacheEntry] = []
     private var reduceMotionOverride: Bool?
+    #if DEBUG
+    private var canAnimateOverrideForTesting: Bool?
+    #endif
 
     private lazy var displayLinkDriver = DisplayLinkDriver(sourceView: self)
 
@@ -168,6 +171,7 @@ public final class TextMorphView: NSView {
         commonInit()
     }
 
+    /// Restores a morphing text view from an AppKit archive.
     public required init?(coder: NSCoder) {
         super.init(coder: coder)
         commonInit()
@@ -268,9 +272,23 @@ extension TextMorphView {
         renderedText
     }
 
+    #if DEBUG
+    var debugIsAnimating: Bool {
+        morphEngine.isAnimating
+    }
+
+    func debugOverrideCanAnimate(_ canAnimate: Bool?) {
+        canAnimateOverrideForTesting = canAnimate
+    }
+
+    func debugFinishAnimation() {
+        morphEngine.finishCurrentAnimation(notifyCompletion: true)
+    }
+    #endif
+
     func prepareForDismantling() {
         onAnimationCompletion = nil
-        morphEngine.cancelForRemovalFromWindow()
+        morphEngine.tearDown()
         snapshotCache.removeAll(keepingCapacity: false)
     }
 
@@ -344,6 +362,11 @@ private extension TextMorphView {
     }
 
     var canAnimate: Bool {
+        #if DEBUG
+        if let canAnimateOverrideForTesting {
+            return canAnimateOverrideForTesting
+        }
+        #endif
         guard let window else { return false }
         return !isHiddenOrHasHiddenAncestor
             && !window.isMiniaturized
@@ -360,9 +383,9 @@ private extension TextMorphView {
         setAccessibilityValue(text)
         let targetText = displayedText(for: bounds.width)
 
-        guard targetText != renderedText else {
+        guard targetText != renderedText || forceReplacement else {
             invalidateIntrinsicContentSize()
-            if notifyCompletion {
+            if notifyCompletion, !morphEngine.isAnimating {
                 onAnimationCompletion?()
             }
             return

@@ -32,13 +32,17 @@ All notable changes to TextMorph are documented here.
 - Avoided glyph-image-bound queries and bitmap allocation for whitespace-only
   snapshots while retaining their exact typographic advance.
 - Replaced repeated nearest-ink boundary scans with precomputed linear passes.
+- Bounded cumulative interrupted exits to 256 units, 16 snapshot generations,
+  and a 16-megapixel outgoing raster budget, pruning the least-visible obsolete
+  units first.
 
 ### Validation
 
 - Added presentation-level AppKit raster tests for upright full-line and sliced
   rendering, plus coverage for reentrant display-link registration, synchronous
   follow-up morphs, long-line fallback, whitespace snapshots, invalid frame
-  timing, constrained zero width, style replacement, and active layout changes.
+  timing, constrained zero width, style replacement, active layout changes,
+  cumulative interruption bounds, exact completion delivery, and teardown.
 
 ## 0.2.0 — 2026-07-19
 

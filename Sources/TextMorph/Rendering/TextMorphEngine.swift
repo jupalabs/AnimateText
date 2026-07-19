@@ -806,9 +806,10 @@ private extension TextMorphEngine {
 
             let pixelCount = token.snapshot.rasterPixelCount
             let total = retainedRasterPixelCount.addingReportingOverflow(pixelCount)
-            guard retainedSnapshots.isEmpty
-                || (!total.overflow
-                    && total.partialValue <= Self.maximumExitingRasterPixelCount)
+            guard
+                retainedSnapshots.isEmpty
+                    || (!total.overflow
+                        && total.partialValue <= Self.maximumExitingRasterPixelCount)
             else {
                 continue
             }
