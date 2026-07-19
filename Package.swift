@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "TextMorph",
     platforms: [
-        .macOS(.v15),
+        .macOS(.v15)
     ],
     products: [
         .library(

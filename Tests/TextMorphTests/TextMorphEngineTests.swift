@@ -1,26 +1,16 @@
-#if canImport(UIKit)
+import AppKit
 import QuartzCore
 import XCTest
-import UIKit
 @testable import TextMorph
 
 @MainActor
 private final class SelfRemovingDisplayLinkParticipant: DisplayLinkParticipant {
     private(set) var callCount = 0
+    weak var driver: DisplayLinkDriver?
 
     func advanceFrame(by duration: TimeInterval) -> Bool {
         callCount += 1
-        SharedDisplayLinkDriver.shared.unregister(self)
-        return false
-    }
-}
-
-@MainActor
-private final class OneShotDisplayLinkParticipant: DisplayLinkParticipant {
-    private(set) var callCount = 0
-
-    func advanceFrame(by duration: TimeInterval) -> Bool {
-        callCount += 1
+        driver?.stop(self)
         return false
     }
 }
@@ -151,17 +141,16 @@ final class TextMorphEngineTests: XCTestCase {
         XCTAssertEqual(exit.target, originalPosition)
     }
 
-    func testDisplayLinkIterationToleratesSynchronousUnregistration() {
+    func testDisplayLinkAdvanceToleratesSynchronousStop() {
+        let driver = DisplayLinkDriver()
         let selfRemoving = SelfRemovingDisplayLinkParticipant()
-        let oneShot = OneShotDisplayLinkParticipant()
-        let driver = SharedDisplayLinkDriver.shared
-        driver.register(selfRemoving)
-        driver.register(oneShot)
+        selfRemoving.driver = driver
+        driver.start(selfRemoving)
 
-        driver.advanceParticipants(by: 1.0 / 120)
+        XCTAssertFalse(driver.advanceParticipant(by: 1.0 / 120))
+        XCTAssertFalse(driver.advanceParticipant(by: 1.0 / 120))
 
         XCTAssertEqual(selfRemoving.callCount, 1)
-        XCTAssertEqual(oneShot.callCount, 1)
     }
 
     func testUndampedCustomSpringCannotKeepTheDisplayLinkAliveForever() {
@@ -241,18 +230,29 @@ final class TextMorphEngineTests: XCTestCase {
     }
 
     private func render(_ layer: CALayer, scale: CGFloat) throws -> Data {
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = scale
-        format.opaque = false
-        let image = UIGraphicsImageRenderer(
-            size: layer.bounds.size,
-            format: format
-        ).image { context in
-            layer.render(in: context.cgContext)
-        }
-        let cgImage = try XCTUnwrap(image.cgImage)
+        let pixelWidth = max(Int((layer.bounds.width * scale).rounded()), 1)
+        let pixelHeight = max(Int((layer.bounds.height * scale).rounded()), 1)
+        let colorSpace =
+            CGColorSpace(name: CGColorSpace.sRGB)
+            ?? CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo =
+            CGBitmapInfo.byteOrder32Big.rawValue
+            | CGImageAlphaInfo.premultipliedLast.rawValue
+        let context = try XCTUnwrap(
+            CGContext(
+                data: nil,
+                width: pixelWidth,
+                height: pixelHeight,
+                bitsPerComponent: 8,
+                bytesPerRow: pixelWidth * 4,
+                space: colorSpace,
+                bitmapInfo: bitmapInfo
+            )
+        )
+        context.scaleBy(x: scale, y: scale)
+        layer.render(in: context)
+        let cgImage = try XCTUnwrap(context.makeImage())
         let provider = try XCTUnwrap(cgImage.dataProvider)
         return try XCTUnwrap(provider.data) as Data
     }
 }
-#endif

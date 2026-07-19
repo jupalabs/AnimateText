@@ -134,9 +134,11 @@ final class TextLineSnapshot {
             height: CGFloat(pixelHeight) / scale
         )
 
-        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)
+        let colorSpace =
+            CGColorSpace(name: CGColorSpace.sRGB)
             ?? CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGBitmapInfo.byteOrder32Big.rawValue
+        let bitmapInfo =
+            CGBitmapInfo.byteOrder32Big.rawValue
             | CGImageAlphaInfo.premultipliedLast.rawValue
         let context = CGContext(
             data: nil,
