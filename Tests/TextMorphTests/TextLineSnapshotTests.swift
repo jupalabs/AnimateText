@@ -1,6 +1,5 @@
-#if canImport(UIKit)
+import AppKit
 import XCTest
-import UIKit
 @testable import TextMorph
 
 @MainActor
@@ -37,7 +36,7 @@ final class TextLineSnapshotTests: XCTestCase {
     }
 
     func testFontLigatureIsCoalescedRatherThanCut() throws {
-        let font = try XCTUnwrap(UIFont(name: "HoeflerText-Regular", size: 32))
+        let font = try XCTUnwrap(NSFont(name: "HoeflerText-Regular", size: 32))
         let snapshot = makeSnapshot("office", font: font)
 
         XCTAssertEqual(snapshot.units.map(\.value), ["o", "ffi", "c", "e"])
@@ -72,9 +71,45 @@ final class TextLineSnapshotTests: XCTestCase {
         XCTAssertGreaterThan(snapshot.metrics.size.width, 16_384 / 3)
     }
 
+    func testAsymmetricGlyphRasterKeepsInkAboveItsBaseline() throws {
+        let snapshot = makeSnapshot(
+            "F",
+            font: .systemFont(ofSize: 96, weight: .black)
+        )
+        let image = try XCTUnwrap(snapshot.image)
+        let provider = try XCTUnwrap(image.dataProvider)
+        let data = try XCTUnwrap(provider.data)
+        let bytes = CFDataGetBytePtr(data)
+        let baselineRow = Int(
+            ((snapshot.metrics.baseline - snapshot.fullFrame.minY) * snapshot.scale)
+                .rounded(.up)
+        )
+        var inkAboveBaseline = 0
+        var inkBelowBaseline = 0
+
+        for row in 0..<image.height {
+            for column in 0..<image.width {
+                let alphaOffset = row * image.bytesPerRow + column * 4 + 3
+                guard bytes?[alphaOffset] ?? 0 > 8 else { continue }
+                if row < baselineRow {
+                    inkAboveBaseline += 1
+                } else {
+                    inkBelowBaseline += 1
+                }
+            }
+        }
+
+        XCTAssertGreaterThan(inkAboveBaseline, 0)
+        XCTAssertLessThan(
+            inkBelowBaseline,
+            max(inkAboveBaseline / 10, 1),
+            "An uppercase F has no descender; substantial ink below the baseline indicates a vertically flipped raster"
+        )
+    }
+
     private func makeSnapshot(
         _ text: String,
-        font: UIFont = .systemFont(ofSize: 32),
+        font: NSFont = .systemFont(ofSize: 32),
         granularity: TextMorphGranularity = .grapheme
     ) -> TextLineSnapshot {
         TextLineSnapshot.make(
@@ -114,4 +149,3 @@ final class TextLineSnapshotTests: XCTestCase {
         }
     }
 }
-#endif
