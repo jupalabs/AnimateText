@@ -153,8 +153,11 @@ final class TextLineSnapshot {
         if let context {
             context.saveGState()
             context.scaleBy(x: scale, y: scale)
-            context.translateBy(x: -canvas.minX, y: canvas.maxY)
-            context.scaleBy(x: 1, y: -1)
+            // `CALayer.contents` consumes a raw `CGImage` in Quartz's native
+            // bottom-up image coordinate system on macOS. Keep the raster in
+            // that orientation; applying AppKit's top-down view transform here
+            // would make the layer display the image upside down.
+            context.translateBy(x: -canvas.minX, y: -canvas.minY)
             context.textPosition = .zero
             CTLineDraw(line, context)
             context.restoreGState()
