@@ -20,6 +20,9 @@ final class TextMorphEngine: DisplayLinkParticipant {
 
     static let maximumAnimatedUnitCount =
         TextLineSnapshot.maximumIndividuallyAnimatedUnitCount
+    static let maximumExitingUnitCount = maximumAnimatedUnitCount
+    static let maximumExitingSnapshotCount = 16
+    static let maximumExitingRasterPixelCount = 16_777_216
     static let maximumAnimationDuration: TimeInterval = 10
 
     var onPresentationSizeChange: (() -> Void)?
@@ -69,6 +72,10 @@ final class TextMorphEngine: DisplayLinkParticipant {
         )
     }
 
+    var isAnimating: Bool {
+        isActive
+    }
+
     var debugTargetTokens: [DebugTokenState] {
         targetTokens.map(debugState(for:))
     }
@@ -78,7 +85,7 @@ final class TextMorphEngine: DisplayLinkParticipant {
     }
 
     var debugIsActive: Bool {
-        isActive
+        isAnimating
     }
 
     func setInitialSnapshot(_ snapshot: TextLineSnapshot) {
@@ -325,6 +332,7 @@ final class TextMorphEngine: DisplayLinkParticipant {
         }
 
         targetTokens = newTokens.compactMap { $0 }
+        pruneExitingTokens()
         currentSnapshot = snapshot
         width.retarget(to: Double(snapshot.metrics.size.width))
         height.retarget(to: Double(snapshot.metrics.size.height))
@@ -355,6 +363,9 @@ final class TextMorphEngine: DisplayLinkParticipant {
         alignment: TextMorphAlignment,
         layoutDirection: NSUserInterfaceLayoutDirection
     ) {
+        let previousExitingOrigins = exitingTokens.map { token in
+            (token, layoutOrigin(for: token.snapshot))
+        }
         layoutBounds = bounds
         self.alignment = alignment
         self.layoutDirection = layoutDirection
@@ -368,6 +379,15 @@ final class TextMorphEngine: DisplayLinkParticipant {
                     x: Double(origin.x + token.visualUnit.anchor.x),
                     y: Double(origin.y + token.visualUnit.anchor.y)
                 )
+            }
+            for (token, previousOrigin) in previousExitingOrigins {
+                let newOrigin = layoutOrigin(for: token.snapshot)
+                token.position.target =
+                    token.position.target
+                    + MotionPoint(
+                        x: Double(newOrigin.x - previousOrigin.x),
+                        y: Double(newOrigin.y - previousOrigin.y)
+                    )
             }
         } else {
             for token in targetTokens {
@@ -486,6 +506,20 @@ final class TextMorphEngine: DisplayLinkParticipant {
     func cancelForRemovalFromWindow() {
         guard isActive else { return }
         finishCurrentAnimation(notifyCompletion: false)
+    }
+
+    func tearDown() {
+        displayLinkDriver.stop(self)
+        removeFullLineLayer()
+        removeAllTokenLayers()
+        targetTokens.removeAll(keepingCapacity: false)
+        exitingTokens.removeAll(keepingCapacity: false)
+        currentSnapshot = nil
+        width = ScalarSpring(value: 0)
+        height = ScalarSpring(value: 0)
+        isActive = false
+        shouldNotifyCompletion = false
+        elapsedAnimationDuration = 0
     }
 }
 
@@ -754,6 +788,68 @@ private extension TextMorphEngine {
             }
         }
         return bestIndex
+    }
+
+    func pruneExitingTokens() {
+        guard !exitingTokens.isEmpty else { return }
+
+        var seenSnapshots: Set<ObjectIdentifier> = []
+        var retainedSnapshots: Set<ObjectIdentifier> = []
+        var retainedRasterPixelCount = 0
+
+        for token in exitingTokens.reversed() {
+            let identifier = ObjectIdentifier(token.snapshot)
+            guard seenSnapshots.insert(identifier).inserted else { continue }
+            guard retainedSnapshots.count < Self.maximumExitingSnapshotCount else {
+                continue
+            }
+
+            let pixelCount = token.snapshot.rasterPixelCount
+            let total = retainedRasterPixelCount.addingReportingOverflow(pixelCount)
+            guard retainedSnapshots.isEmpty
+                || (!total.overflow
+                    && total.partialValue <= Self.maximumExitingRasterPixelCount)
+            else {
+                continue
+            }
+
+            retainedSnapshots.insert(identifier)
+            retainedRasterPixelCount = total.partialValue
+        }
+
+        var shouldRetain = exitingTokens.map { token in
+            retainedSnapshots.contains(ObjectIdentifier(token.snapshot))
+        }
+        let retainedIndices = exitingTokens.indices.filter { shouldRetain[$0] }
+        let overflowCount = max(
+            retainedIndices.count - Self.maximumExitingUnitCount,
+            0
+        )
+        if overflowCount > 0 {
+            let leastVisibleFirst = retainedIndices.sorted { lhsIndex, rhsIndex in
+                let lhs = exitingTokens[lhsIndex]
+                let rhs = exitingTokens[rhsIndex]
+                let lhsHasLayer = lhs.layer != nil
+                let rhsHasLayer = rhs.layer != nil
+                if lhsHasLayer != rhsHasLayer {
+                    return !lhsHasLayer
+                }
+                if lhs.opacity.value != rhs.opacity.value {
+                    return lhs.opacity.value < rhs.opacity.value
+                }
+                return lhs.identifier < rhs.identifier
+            }
+            for index in leastVisibleFirst.prefix(overflowCount) {
+                shouldRetain[index] = false
+            }
+        }
+
+        performWithoutLayerActions {
+            for index in exitingTokens.indices.reversed() where !shouldRetain[index] {
+                removeLayer(from: exitingTokens[index])
+                exitingTokens.remove(at: index)
+            }
+        }
     }
 
     func layoutOrigin(for snapshot: TextLineSnapshot) -> CGPoint {

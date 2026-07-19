@@ -107,4 +107,71 @@ final class TextMorphViewTests: XCTestCase {
         XCTAssertGreaterThan(view.intrinsicContentSize.width, 0)
         XCTAssertNil(view.layer?.sublayers)
     }
+
+    func testStyleReplacementIsNotSkippedWhenTruncatedTextIsUnchanged() throws {
+        let font = NSFont.systemFont(ofSize: 32, weight: .bold)
+        let view = TextMorphView(
+            text: "ABCDEFGHIJ",
+            font: font,
+            textColor: .white,
+            truncationMode: .tail
+        )
+        view.frame = CGRect(x: 0, y: 0, width: 80, height: 50)
+        view.layout()
+        let truncated = view.debugRenderedText
+        XCTAssertNotEqual(truncated, "ABCDEFGHIJ")
+
+        view.apply(
+            text: "ABCDEFGHIK",
+            font: font,
+            textColor: .systemRed,
+            animation: .disabled,
+            granularity: .automatic,
+            textAlignment: .natural,
+            truncationMode: .tail,
+            reduceMotion: false,
+            animated: false,
+            onAnimationCompletion: nil
+        )
+
+        XCTAssertEqual(view.debugRenderedText, truncated)
+        try LayerRenderingTestSupport.assertViewContainsRedInk(view)
+    }
+
+    func testSameTruncatedTargetWaitsForActiveMorphAndCompletesOnce() throws {
+        let view = TextMorphView(text: "ABCDEFGHIJ")
+        view.frame = CGRect(x: 0, y: 0, width: 70, height: 40)
+        view.layout()
+        view.debugOverrideCanAnimate(true)
+
+        var completionCount = 0
+        view.onAnimationCompletion = { completionCount += 1 }
+        view.setText("XYZQRSTUVW", animated: true)
+        let sharedVisibleTarget = view.debugRenderedText
+        XCTAssertTrue(view.debugIsAnimating)
+
+        view.setText("XYZQRSTUVV", animated: true)
+
+        XCTAssertEqual(view.debugRenderedText, sharedVisibleTarget)
+        XCTAssertEqual(completionCount, 0)
+        view.debugFinishAnimation()
+        XCTAssertEqual(completionCount, 1)
+    }
+
+    func testDismantlingStopsMotionAndReleasesRenderedLayers() {
+        let view = TextMorphView(text: "Continue")
+        view.frame = CGRect(x: 0, y: 0, width: 200, height: 40)
+        view.layout()
+        view.debugOverrideCanAnimate(true)
+        var completionCount = 0
+        view.onAnimationCompletion = { completionCount += 1 }
+        view.setText("Confirm", animated: true)
+        XCTAssertTrue(view.debugIsAnimating)
+
+        view.prepareForDismantling()
+
+        XCTAssertFalse(view.debugIsAnimating)
+        XCTAssertNil(view.layer?.sublayers)
+        XCTAssertEqual(completionCount, 0)
+    }
 }

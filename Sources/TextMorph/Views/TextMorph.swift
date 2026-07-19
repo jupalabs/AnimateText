@@ -35,6 +35,7 @@ public struct TextMorph: View {
         completion = onAnimationCompletion
     }
 
+    /// The native morphing-text content managed by this view.
     public var body: some View {
         let metrics = TextLineMetrics.measure(text: text, font: appKitFont)
         let key = LayoutAnimationKey(size: metrics.size)

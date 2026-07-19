@@ -68,6 +68,10 @@ struct BranchTitle: View {
 baseline alignment, accepts horizontal compression, and inserts an ellipsis
 when the proposed width is narrower than the natural line.
 
+Both the SwiftUI and AppKit surfaces are main-actor isolated. An update made
+while the AppKit view is off-window, hidden, minimized, or occluded is applied
+immediately; its completion closure can therefore run synchronously.
+
 The complete initializer is:
 
 ```swift
@@ -157,6 +161,9 @@ Truncation respects extended grapheme-cluster boundaries. Window resizing
 updates the truncated representation immediately, while subsequent text
 changes continue to morph normally at the constrained width.
 
+For `.none`, set `titleView.layer?.masksToBounds = true` when the containing
+layout should clip overflow.
+
 ## Animation
 
 TextMorph includes four composed transitions:
@@ -231,10 +238,12 @@ The spring step is analytical rather than Euler-integrated, so motion remains
 consistent across 60 Hz, 120 Hz, dropped frames, and irregular delivery. A
 small per-view snapshot cache avoids reshaping rapid reversals.
 
-Lines with more than 256 shaping-safe units automatically use a whole-line
-transition, bounding transient layer count and reconciliation work. Extremely
-large lines also reduce private bitmap scale to stay below a 16,384-pixel edge
-and 16-megapixel backing-store budget while preserving typographic layout size.
+Inputs requesting more than 256 textual units are detected before per-glyph
+slice construction and automatically use a whole-line transition. This bounds
+transient layer count and reconciliation work. Whitespace-only lines preserve
+their typographic advance without allocating an empty bitmap. Extremely large
+visible lines reduce private bitmap scale to stay below a 16,384-pixel edge and
+16-megapixel backing-store budget while preserving typographic layout size.
 
 ## Accessibility and international text
 

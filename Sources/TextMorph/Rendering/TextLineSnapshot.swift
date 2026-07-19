@@ -53,6 +53,12 @@ final class TextLineSnapshot {
     let requiresWholeLineAnimation: Bool
     let containsInk: Bool
 
+    var rasterPixelCount: Int {
+        guard let image else { return 0 }
+        let result = image.width.multipliedReportingOverflow(by: image.height)
+        return result.overflow ? .max : result.partialValue
+    }
+
     private init(
         text: String,
         metrics: TextLineMetrics,

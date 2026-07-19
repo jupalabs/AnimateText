@@ -3,6 +3,37 @@ import XCTest
 
 @MainActor
 enum LayerRenderingTestSupport {
+    static func assertViewContainsRedInk(
+        _ view: NSView,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        view.layoutSubtreeIfNeeded()
+        let representation = try XCTUnwrap(
+            view.bitmapImageRepForCachingDisplay(in: view.bounds),
+            file: file,
+            line: line
+        )
+        view.cacheDisplay(in: view.bounds, to: representation)
+        var redPixelCount = 0
+
+        for y in 0..<representation.pixelsHigh {
+            for x in 0..<representation.pixelsWide {
+                guard let color = representation.colorAt(x: x, y: y) else {
+                    continue
+                }
+                if color.alphaComponent > 0.05,
+                    color.redComponent > color.greenComponent * 1.5,
+                    color.redComponent > color.blueComponent * 1.5
+                {
+                    redPixelCount += 1
+                }
+            }
+        }
+
+        XCTAssertGreaterThan(redPixelCount, 0, file: file, line: line)
+    }
+
     static func assertTopHeavyGlyphsRenderUpright(
         in view: NSView,
         file: StaticString = #filePath,

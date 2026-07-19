@@ -2,6 +2,44 @@
 
 All notable changes to TextMorph are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Corrected Core Text bitmap orientation for layer-backed, flipped AppKit views;
+  both resting full-line snapshots and temporary animated slices now render
+  upright.
+- Preserved a synchronously registered follow-up morph when the previous
+  display-link callback completes, preventing reentrant completion handlers from
+  losing their new frame registration.
+- Made zero-duration opacity changes settle exactly when their delay expires and
+  made invalid frame intervals consolidate safely instead of contaminating
+  spring state.
+- Treated a resolved zero-width proposal as an actual constraint rather than an
+  unconstrained initial layout.
+- Applied simultaneous font or color replacements even when two full strings
+  truncate to the same visible value, without delivering duplicate completion
+  callbacks for an already-active visual target.
+- Retargeted outgoing visual slices when alignment or container geometry changes
+  during an active morph.
+- Consolidated active motion when Reduce Motion becomes enabled and tightened
+  AppKit teardown, backing-scale, and display-rebinding behavior.
+
+### Performance
+
+- Moved the 256-unit whole-line fallback ahead of per-glyph slice construction,
+  keeping pathological input linear and bounding transient layer count.
+- Avoided glyph-image-bound queries and bitmap allocation for whitespace-only
+  snapshots while retaining their exact typographic advance.
+- Replaced repeated nearest-ink boundary scans with precomputed linear passes.
+
+### Validation
+
+- Added presentation-level AppKit raster tests for upright full-line and sliced
+  rendering, plus coverage for reentrant display-link registration, synchronous
+  follow-up morphs, long-line fallback, whitespace snapshots, invalid frame
+  timing, constrained zero width, style replacement, and active layout changes.
+
 ## 0.2.0 — 2026-07-19
 
 ### Changed

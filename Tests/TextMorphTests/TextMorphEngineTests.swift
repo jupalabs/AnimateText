@@ -196,6 +196,44 @@ final class TextMorphEngineTests: XCTestCase {
         XCTAssertEqual(exit.target, originalPosition)
     }
 
+    func testLayoutChangeRetargetsExitingVisualsWithTheLine() throws {
+        let fixture = makeFixture(text: "Continue")
+        fixture.engine.layout(
+            in: fixture.host.bounds,
+            alignment: .center,
+            layoutDirection: .leftToRight
+        )
+        fixture.engine.update(
+            to: snapshot("Confirm"),
+            animation: .default,
+            animated: true,
+            fontSize: 32
+        )
+        let exitingIdentifier = try XCTUnwrap(
+            fixture.engine.debugExitingTokens.first?.identifier
+        )
+        let previousTarget = try XCTUnwrap(
+            fixture.engine.debugExitingTokens.first {
+                $0.identifier == exitingIdentifier
+            }?.target
+        )
+
+        fixture.host.bounds.size.width += 200
+        fixture.engine.layout(
+            in: fixture.host.bounds,
+            alignment: .center,
+            layoutDirection: .leftToRight
+        )
+
+        let retargeted = try XCTUnwrap(
+            fixture.engine.debugExitingTokens.first {
+                $0.identifier == exitingIdentifier
+            }
+        )
+        XCTAssertEqual(retargeted.target.x, previousTarget.x + 100, accuracy: 0.001)
+        XCTAssertEqual(retargeted.target.y, previousTarget.y, accuracy: 0.001)
+    }
+
     func testLongLineTransitionBoundsBothSidesToWholeLineVisuals() {
         let longText = String(repeating: "a", count: 300)
         let fixture = makeFixture(text: longText)
@@ -210,6 +248,31 @@ final class TextMorphEngineTests: XCTestCase {
         XCTAssertEqual(fixture.engine.debugTargetTokens.count, 1)
         XCTAssertEqual(fixture.engine.debugExitingTokens.count, 1)
         XCTAssertEqual(fixture.host.sublayers?.count, 2)
+    }
+
+    func testRapidFullUnitReplacementBoundsCumulativeExitingVisuals() {
+        let unitCount = TextMorphEngine.maximumAnimatedUnitCount
+        let fixture = makeFixture(text: String(repeating: "a", count: unitCount))
+
+        for character in ["b", "c", "d", "e"] {
+            fixture.engine.update(
+                to: snapshot(String(repeating: character, count: unitCount)),
+                animation: .default,
+                animated: true,
+                fontSize: 32
+            )
+        }
+
+        XCTAssertEqual(fixture.engine.debugTargetTokens.count, unitCount)
+        XCTAssertLessThanOrEqual(
+            fixture.engine.debugExitingTokens.count,
+            TextMorphEngine.maximumExitingUnitCount
+        )
+        XCTAssertLessThanOrEqual(
+            fixture.host.sublayers?.count ?? 0,
+            TextMorphEngine.maximumAnimatedUnitCount
+                + TextMorphEngine.maximumExitingUnitCount
+        )
     }
 
     func testDisplayLinkAdvanceToleratesSynchronousStop() {
